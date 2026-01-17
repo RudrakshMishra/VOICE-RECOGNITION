@@ -1,121 +1,115 @@
-"""
-Audio Data Collection Script for Edge Impulse
-Collects voice samples and uploads to Edge Impulse Studio
+/*
+ * ESP32 Voice Recognition with INMP441 Microphone
+ * Using Edge Impulse for ML inference
+ * 
+ * Hardware:
+ * - ESP32 Development Board
+ * - INMP441 MEMS Microphone
+ * 
+ * Connections:
+ * INMP441 -> ESP32
+ * WS  -> GPIO 15
+ * SCK -> GPIO 14
+ * SD  -> GPIO 32
+ * L/R -> GND
+ * VDD -> 3.3V
+ * GND -> GND
+ */
 
-Requirements:
-pip install edge-impulse-linux
-pip install pyaudio
-pip install numpy
-"""
+#include <driver/i2s.h>
 
-import pyaudio
-import wave
-import numpy as np
-import json
-import os
-from datetime import datetime
+// Replace with your Edge Impulse library
+// #include <your_project_name_inferencing.h>
 
-# Configuration
-SAMPLE_RATE = 16000
-CHANNELS = 1
-CHUNK = 1024
-RECORD_SECONDS = 1
-OUTPUT_DIR = "audio_samples"
+// I2S Configuration
+#define I2S_WS 15
+#define I2S_SD 32
+#define I2S_SCK 14
+#define I2S_PORT I2S_NUM_0
 
-# Voice commands to collect
-COMMANDS = ["yes", "no", "up", "down", "left", "right", "on", "off"]
+#define SAMPLE_RATE 16000
+#define SAMPLE_BITS 16
+#define AUDIO_BUFFER_SIZE 512
 
-class AudioCollector:
-    def __init__(self):
-        self.audio = pyaudio.PyAudio()
-        if not os.path.exists(OUTPUT_DIR):
-            os.makedirs(OUTPUT_DIR)
+int16_t audioBuffer[AUDIO_BUFFER_SIZE];
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("ESP32 Voice Recognition Starting...");
+  
+  // Initialize I2S for INMP441
+  i2s_config_t i2s_config = {
+    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
+    .sample_rate = SAMPLE_RATE,
+    .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
+    .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+    .communication_format = I2S_COMM_FORMAT_I2S,
+    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+    .dma_buf_count = 4,
+    .dma_buf_len = 1024,
+    .use_apll = false,
+    .tx_desc_auto_clear = false,
+    .fixed_mclk = 0
+  };
+
+  i2s_pin_config_t pin_config = {
+    .bck_io_num = I2S_SCK,
+    .ws_io_num = I2S_WS,
+    .data_out_num = I2S_PIN_NO_CHANGE,
+    .data_in_num = I2S_SD
+  };
+
+  i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL);
+  i2s_set_pin(I2S_PORT, &pin_config);
+  i2s_set_clk(I2S_PORT, SAMPLE_RATE, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO);
+
+  Serial.println("I2S Microphone initialized");
+  
+  // Initialize Edge Impulse
+  // ei_impulse_init();
+}
+
+void loop() {
+  size_t bytesRead = 0;
+  
+  // Read audio data from I2S microphone
+  i2s_read(I2S_PORT, (void*)audioBuffer, AUDIO_BUFFER_SIZE * sizeof(int16_t), &bytesRead, portMAX_DELAY);
+  
+  // Process audio with Edge Impulse
+  // This is where you would run inference
+  /*
+  signal_t signal;
+  signal.total_length = AUDIO_BUFFER_SIZE;
+  signal.get_data = &microphone_audio_signal_get_data;
+  
+  ei_impulse_result_t result = { 0 };
+  EI_IMPULSE_ERROR res = run_classifier(&signal, &result, false);
+  
+  if (res != 0) {
+    Serial.printf("ERR: Failed to run classifier (%d)\n", res);
+    return;
+  }
+  
+  // Print predictions
+  Serial.println("Predictions:");
+  for (size_t ix = 0; ix < EI_CLASSIFIER_LABEL_COUNT; ix++) {
+    Serial.printf("    %s: %.5f\n", result.classification[ix].label, result.classification[ix].value);
     
-    def record_sample(self, label, sample_num):
-        """Record a single audio sample"""
-        print(f"\nRecording '{label}' - Sample {sample_num}")
-        print("Say the word now...")
-        
-        stream = self.audio.open(
-            format=pyaudio.paInt16,
-            channels=CHANNELS,
-            rate=SAMPLE_RATE,
-            input=True,
-            frames_per_buffer=CHUNK
-        )
-        
-        frames = []
-        
-        for i in range(0, int(SAMPLE_RATE / CHUNK * RECORD_SECONDS)):
-            data = stream.read(CHUNK)
-            frames.append(data)
-        
-        stream.stop_stream()
-        stream.close()
-        
-        # Save the recording
-        filename = f"{OUTPUT_DIR}/{label}_{sample_num}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
-        wf = wave.open(filename, 'wb')
-        wf.setnchannels(CHANNELS)
-        wf.setsampwidth(self.audio.get_sample_size(pyaudio.paInt16))
-        wf.setframerate(SAMPLE_RATE)
-        wf.writeframes(b''.join(frames))
-        wf.close()
-        
-        print(f"Saved: {filename}")
-        return filename
-    
-    def collect_dataset(self, samples_per_label=10):
-        """Collect dataset for all commands"""
-        print("=== Voice Command Data Collection ===")
-        print(f"Sample rate: {SAMPLE_RATE} Hz")
-        print(f"Duration: {RECORD_SECONDS} second(s) per sample")
-        print(f"Samples per command: {samples_per_label}")
-        print(f"\nCommands: {', '.join(COMMANDS)}\n")
-        
-        for command in COMMANDS:
-            print(f"\n--- Collecting samples for: {command.upper()} ---")
-            for i in range(samples_per_label):
-                input(f"Press Enter to record sample {i+1}/{samples_per_label}...")
-                self.record_sample(command, i+1)
-        
-        print("\n=== Data collection complete! ===")
-        print(f"All samples saved to: {OUTPUT_DIR}/")
-        print("\nNext steps:")
-        print("1. Upload samples to Edge Impulse Studio")
-        print("2. Design your impulse (Audio MFCC -> Neural Network)")
-        print("3. Train the model")
-        print("4. Deploy to ESP32")
-    
-    def close(self):
-        """Clean up resources"""
-        self.audio.terminate()
-
-def create_metadata_file():
-    """Create a metadata file for Edge Impulse"""
-    metadata = {
-        "version": 1,
-        "name": "Voice Commands Dataset",
-        "description": "Custom voice command dataset",
-        "sampleRate": SAMPLE_RATE,
-        "channels": CHANNELS,
-        "labels": COMMANDS,
-        "samplesPerLabel": 10,
-        "duration": RECORD_SECONDS
+    // If confidence > threshold, command recognized
+    if (result.classification[ix].value > 0.7) {
+      Serial.printf("Command recognized: %s\n", result.classification[ix].label);
+      // Add your action here based on recognized command
     }
-    
-    with open(f"{OUTPUT_DIR}/metadata.json", 'w') as f:
-        json.dump(metadata, f, indent=2)
-    
-    print(f"Metadata saved to {OUTPUT_DIR}/metadata.json")
+  }
+  */
+  
+  delay(100);
+}
 
-if __name__ == "__main__":
-    collector = AudioCollector()
-    
-    try:
-        collector.collect_dataset(samples_per_label=10)
-        create_metadata_file()
-    except KeyboardInterrupt:
-        print("\n\nData collection interrupted by user")
-    finally:
-        collector.close()
+// Callback function for Edge Impulse to get audio data
+/*
+int microphone_audio_signal_get_data(size_t offset, size_t length, float *out_ptr) {
+  numpy::int16_to_float(&audioBuffer[offset], out_ptr, length);
+  return 0;
+}
+*/
